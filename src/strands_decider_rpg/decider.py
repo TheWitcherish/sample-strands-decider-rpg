@@ -1,14 +1,16 @@
-"""Typed client for the Strands Decider 2B decision model.
+"""Typed client for the Strands Decider decision models.
 
-Strands Decider is a small, fast "system one" model: it does not generate text, it reads a
-state plus typed questions and returns an answer with a calibrated confidence
-(https://strandsagents.com/blog/introducing-strands-decider/, fetched 2026-10-09).
+Strands Decider is a small, fast "system one" model: it does not generate text, it reads a state
+plus typed questions and returns an answer with a calibrated confidence
+(https://github.com/strands-labs/strands-decider, README fetched 2026-10-10). It answers three
+question types over one state, all in a single forward pass:
 
-This module exposes the one decision shape the experiments need so far -- a yes/no (``noul``)
-question -- behind a ``Decider`` Protocol, so a story engine depends on the contract and never
-imports a concrete backend. Two backends ship: ``HttpDecider`` talks to a local
-``strands-decider serve`` instance; ``ScriptedDecider`` is deterministic for tests and the
-offline demo.
+- ``noul``: yes/no, returns P(yes).
+- ``choice``: one of N named options, returns the pick, the probabilities and a confidence.
+- ``score``: an ordered rubric, returns an expected level, the probabilities and a confidence.
+
+The wire shapes below mirror ``strands_decider/schema.py`` in the pinned ``strands-decider==0.1.0``.
+A story engine depends on the ``Decider`` Protocol and never imports a concrete backend.
 """
 
 from __future__ import annotations
@@ -16,145 +18,271 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Annotated, Final, Literal, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-DEFAULT_DECIDER_MODEL: Final[str] = "strands-decider-2B-qwen3.5-v1-2610"
+DEFAULT_DECIDER_MODEL: Final[str] = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"
 DEFAULT_DECIDER_URL: Final[str] = "http://localhost:8000"
 
 DECIDER_MODEL: Final[str] = os.environ.get("DECIDER_MODEL", DEFAULT_DECIDER_MODEL)
 DECIDER_URL: Final[str] = os.environ.get("DECIDER_URL", DEFAULT_DECIDER_URL)
 
+_FROZEN: Final[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
+
+
+# --- Questions -------------------------------------------------------------------------------
+
 
 class YesNoQuestion(BaseModel):
-    """A yes/no (``noul``) question put to the decider.
+    """A yes/no (``noul``) question.
 
-    Frozen Pydantic model: the question is data at the boundary, never mutated after it is built.
+    ``criteria`` optionally describes what counts as yes (``"true"``) and no (``"false"``); the
+    decider README calls this sharpening the boundary, and it measurably lifts confidence.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = _FROZEN
 
     key: str
     instructions: str
+    criteria: Mapping[str, str] | None = None
 
 
-class Decision(BaseModel):
-    """The decider's verdict on one yes/no question.
+class ChoiceQuestion(BaseModel):
+    """Pick one of N named options. ``options`` maps option name to its description."""
 
-    Attributes:
-        key: The question key this verdict answers.
-        value: The raw ``noul`` score in ``[0, 1]``; closer to 1 leans yes.
-    """
-
-    model_config = ConfigDict(frozen=True)
+    model_config = _FROZEN
 
     key: str
-    value: float = Field(ge=0.0, le=1.0)
+    instructions: str
+    options: Mapping[str, str]
+
+
+class ScoreQuestion(BaseModel):
+    """Rate against an ordered rubric. ``rubric`` is ascending: index 0 is the low end."""
+
+    model_config = _FROZEN
+
+    key: str
+    instructions: str
+    rubric: tuple[str, ...]
+
+
+Question = YesNoQuestion | ChoiceQuestion | ScoreQuestion
+
+
+def _wire_question(question: Question) -> dict[str, object]:
+    match question:
+        case YesNoQuestion(criteria=None):
+            return {"type": "noul", "instructions": question.instructions}
+        case YesNoQuestion():
+            return {
+                "type": "noul",
+                "instructions": question.instructions,
+                "criteria": dict(question.criteria or {}),
+            }
+        case ChoiceQuestion():
+            return {
+                "type": "choice",
+                "instructions": question.instructions,
+                "criteria": dict(question.options),
+            }
+        case ScoreQuestion():
+            return {
+                "type": "score",
+                "instructions": question.instructions,
+                "criteria": list(question.rubric),
+            }
+
+
+# --- Answers ---------------------------------------------------------------------------------
+
+
+class NoulAnswer(BaseModel):
+    """The model's P(yes) for a yes/no question."""
+
+    model_config = _FROZEN
+
+    type: Literal["noul"] = "noul"
+    noul: float = Field(ge=0.0, le=1.0)
 
     @property
     def yes(self) -> bool:
-        """True when the score leans yes (at or above the 0.5 midpoint)."""
-        return self.value >= 0.5
+        """True when the answer leans yes."""
+        return self.noul >= 0.5
 
     @property
     def confidence(self) -> float:
-        """Reliability of the verdict in ``[0.5, 1.0]``.
+        """How decided the model is, in ``[0, 1]``: ``|2p - 1|``.
 
-        The model returns only the ``noul`` score for a yes/no question, so confidence is derived
-        as the probability it assigns to the side it picked: ``max(value, 1 - value)``. A score of
-        0.5 is a coin flip (0.5); a score of 0.0 or 1.0 is full confidence (1.0). This matches the
-        model card's guidance that answers at confidence 0.9 or more are right about 95% of the
-        time.
+        The server returns no confidence for a yes/no question because P(yes) already carries
+        it. ``|2p - 1|`` is the library's own normalised max-probability for two options, so a
+        noul confidence reads on the same scale as a choice confidence: 0 is a coin flip, 1 is
+        certain.
         """
-        return max(self.value, 1.0 - self.value)
+        return abs(2.0 * self.noul - 1.0)
+
+    @property
+    def summary(self) -> str:
+        """Short human-readable form of the answer."""
+        return f"{'yes' if self.yes else 'no'} (p_yes={self.noul:.3f})"
+
+
+class ChoiceAnswer(BaseModel):
+    """The option the model picked, with its probabilities and calibrated confidence."""
+
+    model_config = _FROZEN
+
+    type: Literal["choice"] = "choice"
+    choice: str
+    probabilities: Mapping[str, float]
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @property
+    def summary(self) -> str:
+        """Short human-readable form of the answer."""
+        return self.choice
+
+
+class ScoreAnswer(BaseModel):
+    """The expected rubric level, with its probabilities and calibrated confidence."""
+
+    model_config = _FROZEN
+
+    type: Literal["score"] = "score"
+    score: float = Field(ge=0.0)
+    probabilities: Mapping[str, float]
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @property
+    def level(self) -> int:
+        """The rubric index closest to the expected score."""
+        return round(self.score)
+
+    @property
+    def summary(self) -> str:
+        """Short human-readable form of the answer."""
+        return f"score={self.score:.2f}"
+
+
+Answer = Annotated[NoulAnswer | ChoiceAnswer | ScoreAnswer, Field(discriminator="type")]
+
+
+class Verdict(BaseModel):
+    """Everything one round trip to the decider returned.
+
+    Attributes:
+        model: Model name the server reports.
+        latency_ms: Server-side time for the whole request, all questions included.
+        answers: Answer per question key.
+    """
+
+    model_config = _FROZEN
+
+    model: str
+    latency_ms: float = 0.0
+    answers: Mapping[str, Answer]
+
+    def noul(self, key: str) -> NoulAnswer:
+        """Return the yes/no answer for ``key``.
+
+        Raises:
+            KeyError: If ``key`` is missing. TypeError: If its answer is not a yes/no.
+        """
+        answer = self.answers[key]
+        if not isinstance(answer, NoulAnswer):
+            raise TypeError(f"{key} is a {answer.type} answer, not noul")
+        return answer
+
+    def choice(self, key: str) -> ChoiceAnswer:
+        """Return the choice answer for ``key``.
+
+        Raises:
+            KeyError: If ``key`` is missing. TypeError: If its answer is not a choice.
+        """
+        answer = self.answers[key]
+        if not isinstance(answer, ChoiceAnswer):
+            raise TypeError(f"{key} is a {answer.type} answer, not choice")
+        return answer
+
+    def score(self, key: str) -> ScoreAnswer:
+        """Return the score answer for ``key``.
+
+        Raises:
+            KeyError: If ``key`` is missing. TypeError: If its answer is not a score.
+        """
+        answer = self.answers[key]
+        if not isinstance(answer, ScoreAnswer):
+            raise TypeError(f"{key} is a {answer.type} answer, not score")
+        return answer
+
+
+_VERDICT: Final[TypeAdapter[Verdict]] = TypeAdapter(Verdict)
+
+
+# --- Backends --------------------------------------------------------------------------------
 
 
 class Decider(Protocol):
-    """Read-only contract: given a state and yes/no questions, return one decision each.
+    """Read-only contract: given a state and questions, answer them all in one round trip.
 
     Borrow-checker discipline: ``questions`` is a read-only ``Sequence`` the decider never
-    mutates, and it returns a fresh tuple in the same order.
+    mutates; the returned ``Verdict`` is a fresh frozen value.
     """
 
-    def decide(self, state: str, questions: Sequence[YesNoQuestion]) -> tuple[Decision, ...]: ...
-
-
-class _NoulAnswer(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore")
-
-    noul: float
-
-
-class _SystemOneResponse(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore")
-
-    answers: Mapping[str, _NoulAnswer]
+    def decide(self, state: str, questions: Sequence[Question]) -> Verdict: ...
 
 
 @dataclass(frozen=True, slots=True)
 class HttpDecider:
-    """Talks to a local ``strands-decider serve`` instance over its ``/v1/systemone`` endpoint.
-
-    Start the server first (installs the ``decider`` extra, then serves the model locally):
-
-        uv sync --extra decider
-        uv run strands-decider serve "$DECIDER_MODEL" --port 8000
+    """Talks to a ``strands-decider serve`` instance over ``POST /v1/systemone``.
 
     Attributes:
         base_url: Server base URL. Defaults to the ``DECIDER_URL`` env var or localhost:8000.
-        model: Model id, surfaced for logging. Defaults to the ``DECIDER_MODEL`` env var.
         timeout_s: Per-request timeout in seconds.
         client: Optional caller-owned client (used in tests). When omitted, a client is created
             and closed per call -- its lifetime is the ``decide`` scope.
     """
 
     base_url: str = DECIDER_URL
-    model: str = DECIDER_MODEL
-    timeout_s: float = 30.0
+    timeout_s: float = 60.0
     client: httpx.Client | None = None
 
-    def decide(self, state: str, questions: Sequence[YesNoQuestion]) -> tuple[Decision, ...]:
-        """Ask the live model every question in one pass and return the decisions in order.
+    def decide(self, state: str, questions: Sequence[Question]) -> Verdict:
+        """Ask every question in one request and return the typed verdict.
 
         Raises:
             httpx.HTTPError: If the server is unreachable or returns a non-2xx status.
-            pydantic.ValidationError: If the response is not the expected ``/v1/systemone`` shape.
+            pydantic.ValidationError: If the response is not the expected shape.
         """
-        questions_payload: dict[str, dict[str, str]] = {
-            q.key: {"type": "noul", "instructions": q.instructions} for q in questions
-        }
-        body = {"state": state, "questions": questions_payload}
-
-        # Lifetimes are scopes: a client we create, we close; an injected client stays the
-        # caller's to own and close (single owner).
+        body = {"state": state, "questions": {q.key: _wire_question(q) for q in questions}}
+        # Lifetimes are scopes: a client we create, we close; an injected one stays the caller's.
         client = self.client if self.client is not None else httpx.Client(timeout=self.timeout_s)
         try:
             response = client.post(f"{self.base_url}/v1/systemone", json=body)
             response.raise_for_status()
-            payload = response.json()
+            payload: object = response.json()
         finally:
             if self.client is None:
                 client.close()
-
-        parsed = _SystemOneResponse.model_validate(payload)
-        return tuple(Decision(key=q.key, value=parsed.answers[q.key].noul) for q in questions)
+        return _VERDICT.validate_python(payload)
 
 
 @dataclass(frozen=True, slots=True)
 class ScriptedDecider:
-    """Deterministic decider for tests and the offline demo.
-
-    Maps each question key to a fixed ``noul`` score, so a run reproduces with no model, no GPU
-    and no network -- the 30-second-kickoff path.
+    """Deterministic decider for tests and the offline demo: no model, no GPU, no network.
 
     Attributes:
-        scores: Read-only mapping of question key to a fixed score in ``[0, 1]``.
+        answers: Read-only mapping of question key to the answer to return.
     """
 
-    scores: Mapping[str, float]
+    answers: Mapping[str, NoulAnswer | ChoiceAnswer | ScoreAnswer]
 
-    def decide(self, state: str, questions: Sequence[YesNoQuestion]) -> tuple[Decision, ...]:
-        """Return a decision per question from the scripted scores, in order."""
-        return tuple(Decision(key=q.key, value=self.scores[q.key]) for q in questions)
+    def decide(self, state: str, questions: Sequence[Question]) -> Verdict:
+        """Return the scripted answer for each question asked.
+
+        Raises:
+            KeyError: If a question has no scripted answer.
+        """
+        return Verdict(model="scripted", answers={q.key: self.answers[q.key] for q in questions})
