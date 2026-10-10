@@ -1,0 +1,39 @@
+[project]
+name = "strands-decider-rpg"
+version = "0.1.0"
+description = "Once Upon Agentic AI replayed with the Strands Decider 2B: its confidence picks the ending."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.14",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+# The real decision model plus its CLI and server. Heavy (pulls torch + transformers), so it is
+# an opt-in extra: the default install stays light and the scripted demo and the tests run with
+# no model, no GPU and no network. Install with `uv sync --extra decider` for the live run.
+decider = ["strands-decider==0.1.0"]
+
+[dependency-groups]
+dev = ["pytest>=9.1", "ruff>=0.16", "mypy>=2.4"]
+
+[project.scripts]
+once-upon-decider = "strands_decider_rpg.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strands_decider_rpg"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
