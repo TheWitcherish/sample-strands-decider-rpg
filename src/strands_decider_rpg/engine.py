@@ -68,9 +68,9 @@ class ChapterResult(BaseModel):
         round_trips: Requests sent to the decider.
         answers: Every answer the decider returned, by question key.
         confidence: The confidence the routing was decided on.
-        acted: True when the Game Master acted; False when it handed control to the table.
+        acted: True when the AI Game Master acted; False when it handed control to the table.
         branch: Branch label taken.
-        detail: One line of chapter-specific evidence (a dice roll, a council vote).
+        detail: One line of chapter-specific evidence (a dice roll, the agents called).
         narration: Narration for the branch.
         ending_title: Title of the chapter ending.
         ending_prose: Text of the chapter ending.
@@ -153,7 +153,7 @@ CAMPAIGN_ENDINGS: Final[Mapping[Fate, CampaignEnding]] = {
         title="The Legend of the Loud",
         prose=(
             "Five chapters, and the decider never once flinched. The bards run out of rhymes for"
-            " 'reckless'. Your statue has its sword drawn and the door it kicked in beside it."
+            " 'reckless'. Your statue has its sword drawn and a bramblehoot beside it."
         ),
     ),
     Fate.CUNNING: CampaignEnding(

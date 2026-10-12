@@ -2,11 +2,11 @@
 
 | Chapter | Workshop topic          | Decider capability shown                         |
 | ------- | ----------------------- | ------------------------------------------------ |
-| 1       | Agent Summoning         | ``noul``: a yes/no with a calibrated confidence  |
+| 1       | Agent Summoning         | ``noul``: does this need a perception check?     |
 | 2       | Vended Tools            | ``choice``: tool selection in one forward pass   |
-| 3       | Custom Tools (dice)     | ``score``: an ordered rubric sets the dice DC    |
+| 3       | Custom Tools (dice)     | ``score``: an ordered rubric sets the d6 target  |
 | 4       | MCP portals             | three guard questions, one round trip            |
-| 5       | A2A Grand Alliance      | a council of deciders (any model variant) votes  |
+| 5       | A2A Grand Alliance      | ``choice``: which specialist agent to call       |
 """
 
 from __future__ import annotations
@@ -41,11 +41,11 @@ class Preset(StrEnum):
 def _hesitate(what: str) -> Branch:
     return Branch(
         label="HESITATE",
-        narration=f"The Game Master pauses. {what} -- too close to call, so the dice go to you.",
+        narration=f"The AI Game Master pauses. {what} -- too close to call, so the dice go to you.",
         ending_title="The Table Decides",
         ending_prose=(
-            "A good Game Master knows when not to improvise: a confident wrong turn is worse than"
-            " an honest question."
+            "A good AI Game Master knows when not to improvise: a confident wrong turn is worse"
+            " than an honest question."
         ),
         fate=Fate.TABLE,
     )
@@ -57,54 +57,90 @@ def _choice(picked: str, confidence: float, options: Sequence[str]) -> ChoiceAns
     return ChoiceAnswer(choice=picked, probabilities=probs, confidence=confidence)
 
 
-# --- Chapter 1: The Art of Agent Summoning (noul) --------------------------------------------
+def roll_d6(seed: int, *, keep_lower: bool = False) -> int:
+    """Roll a d6 from a seeded generator this function owns, so a run is reproducible.
+
+    With ``keep_lower``, roll twice and keep the lower die.
+    """
+    rng = random.Random(seed)
+    first = rng.randint(1, 6)
+    return min(first, rng.randint(1, 6)) if keep_lower else first
+
+
+# --- Chapter 1: The Art of Agent Summoning (noul = does this need a check?) ------------------
 
 CH1: Final = ChapterInfo(
     number=1,
     title="The Art of Agent Summoning",
     opening=(
-        "The tavern door is shut against the rain. Inside, a quest waits. A freshly summoned"
-        " adventurer steps up to the threshold."
+        "Your first adventure. The AI Game Master explains the only rule: you say what your"
+        " character does, and it tells you what happens. You walk a forest path at dusk. Far off"
+        " in the trees, something goes CRACK."
     ),
-    default_say="I kick the door open and stride in, blade drawn, ready for anything!",
+    default_say="Wait, what was that? I stop and look toward the sound.",
 )
 CH1_Q: Final = YesNoQuestion(
-    key="is_bold",
-    instructions="Is the adventurer charging in boldly?",
+    key="needs_check",
+    instructions="Does the adventurer's action call for a perception check, a roll to notice?",
     criteria={
-        "true": "The adventurer acts loudly, fast or aggressively without checking first",
-        "false": "The adventurer watches, scouts, waits or acts quietly first",
+        "true": "The adventurer actively stops, looks, listens or heads toward the sound",
+        "false": "The adventurer chooses to ignore the sound and carries on without looking",
     },
 )
-CH1_BOLD: Final = Branch(
-    "BOLD",
-    "The door bangs off the wall, every head turns, and the quest comes to you -- loudly.",
-    "A Blaze of Glory",
-    "The bards will sing of the night you walked in like thunder. Short song. Great chorus.",
-    Fate.GLORY,
-)
-CH1_CAUTIOUS: Final = Branch(
-    "CAUTIOUS",
-    "You read the room before the room reads you, and slip in along the wall.",
-    "The Long Game",
-    "You leave knowing three secrets nobody meant to tell you, and the night is still young.",
+CH1_NEEDS: Final[int] = 4
+CH1_SPOTS_FIRST: Final = Branch(
+    "SPOTS_FIRST",
+    "The d6 beats the number. Between the trees you see it before it sees you: a bramblehoot,"
+    " a bear with an owl's face.",
+    "First Sight",
+    "You have never met one before. It is sniffing the air, and it has smelled your coffee.",
     Fate.CUNNING,
 )
+CH1_SEEN_FIRST: Final = Branch(
+    "SEEN_FIRST",
+    "The d6 lands short of the number. Something big steps out of the brambles, and it saw you"
+    " first: a bramblehoot, a bear with an owl's face.",
+    "Face to Beak",
+    "It tilts its head all the way sideways and hoots. You decide that was hello.",
+    Fate.GLORY,
+)
+CH1_SURPRISED: Final = Branch(
+    "SURPRISED",
+    "No check, no roll. You walk on, and the noise steps onto the path: a bramblehoot, a bear"
+    " with an owl's face.",
+    "Some Squirrel",
+    "You have never met one before. It has never met coffee before. You are about to be friends.",
+    Fate.GLORY,
+)
 
 
-def play_chapter_one(deciders: Sequence[Decider], say: str, bar: float) -> ChapterResult:
-    """Chapter 1: one yes/no question; its confidence picks bold, cautious, or the table."""
+def play_chapter_one(deciders: Sequence[Decider], say: str, bar: float, seed: int) -> ChapterResult:
+    """Chapter 1: decide whether the action needs a perception check, and only then roll.
+
+    Sure it does: roll a d6 and beat the number. Sure it does not: no roll, the creature finds
+    you. Unsure: the AI Game Master asks the player instead of guessing.
+    """
     verdict = deciders[0].decide(scene(CH1, say), (CH1_Q,))
     answer = verdict.noul(CH1_Q.key)
     acted = answer.confidence >= bar
-    branch = (CH1_BOLD if answer.yes else CH1_CAUTIOUS) if acted else _hesitate("Bold or careful")
-    return resolve(CH1, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
+    detail = ""
+    if not acted:
+        branch = _hesitate("Roll or no roll")
+    elif answer.yes:
+        roll = roll_d6(seed)
+        branch = CH1_SPOTS_FIRST if roll >= CH1_NEEDS else CH1_SEEN_FIRST
+        detail = f"perception check -> needs {CH1_NEEDS}+; the d6 shows {roll}"
+    else:
+        branch = CH1_SURPRISED
+    return resolve(
+        CH1, say, (verdict,), branch, confidence=answer.confidence, acted=acted, detail=detail
+    )
 
 
 CH1_SCRIPTS: Final[Mapping[Preset, Mapping[str, NoulAnswer]]] = {
-    Preset.BOLD: {"is_bold": NoulAnswer(noul=0.98)},
-    Preset.CAUTIOUS: {"is_bold": NoulAnswer(noul=0.02)},
-    Preset.UNSURE: {"is_bold": NoulAnswer(noul=0.58)},
+    Preset.BOLD: {"needs_check": NoulAnswer(noul=0.02)},
+    Preset.CAUTIOUS: {"needs_check": NoulAnswer(noul=0.98)},
+    Preset.UNSURE: {"needs_check": NoulAnswer(noul=0.58)},
 }
 
 
@@ -114,13 +150,14 @@ CH2: Final = ChapterInfo(
     number=2,
     title="The Adventurer's Arsenal",
     opening=(
-        "Kiro the Grey Hat unrolls the arsenal: a rulebook that answers over http, a shell that"
-        " casts raw commands, and a quill that writes scrolls. One tool per request."
+        "The bramblehoot is still sniffing your coffee when a Wizard steps out of the trees and"
+        " unrolls the arsenal: a rulebook that answers over http, a shell that casts raw"
+        " commands, and a quill that writes scrolls. One tool per request."
     ),
-    default_say="What does a beholder's eye ray do? Look it up in the official rules.",
+    default_say="What is a bramblehoot, and is it friendly? Look it up in the rulebook.",
 )
 CH2_OPTIONS: Final[Mapping[str, str]] = {
-    "http_request": "Look something up in the online 5e SRD rules",
+    "http_request": "Look something up in the rulebook",
     "shell": "Run a command on the wizard's machine",
     "file_editor": "Write or edit a scroll (a file)",
 }
@@ -132,9 +169,10 @@ CH2_Q: Final = ChoiceQuestion(
 CH2_BRANCHES: Final[Mapping[str, Branch]] = {
     "http_request": Branch(
         "HTTP_REQUEST",
-        "The rulebook glows and answers. Knowledge, fetched in one call, no guessing.",
+        "The rulebook glows and answers: bramblehoots are gentle, curious, and follow anyone"
+        " who carries coffee.",
         "The Scholar's Edge",
-        "You walk into the next fight already knowing how it ends.",
+        "You walk on with a new friend at your side. It walks on with its nose in your coffee.",
         Fate.CUNNING,
     ),
     "shell": Branch(
@@ -176,13 +214,13 @@ CH3: Final = ChapterInfo(
     number=3,
     title="The Art of Magical Forging",
     opening=(
-        "Lady Luck, keeper of the freshly forged roll_dice tool, spins a d20 between two"
+        "Lady Luck, keeper of the freshly forged roll_dice tool, spins a d6 between two"
         " fingers. 'Tell me your plan, darling, and I will tell you how hard it is.'"
     ),
     default_say="I leap off the balcony onto the chandelier and swing across the hall!",
 )
 CH3_RUBRIC: Final[tuple[str, ...]] = ("trivial", "risky", "dangerous", "deadly")
-CH3_DC: Final[tuple[int, ...]] = (5, 10, 15, 20)
+CH3_NEEDS: Final[tuple[int, ...]] = (2, 3, 4, 5)
 CH3_Q: Final = ScoreQuestion(
     key="danger",
     instructions="How dangerous is the adventurer's plan?",
@@ -190,46 +228,36 @@ CH3_Q: Final = ScoreQuestion(
 )
 CH3_SUCCESS: Final = Branch(
     "SUCCESS",
-    "The d20 lands. It beats the DC. Lady Luck applauds, theatrically.",
+    "The d6 lands. It beats the number. Lady Luck applauds, theatrically.",
     "Fortune Favours",
     "You stick the landing. Nobody believes you planned it. You did not.",
     Fate.GLORY,
 )
 CH3_FAILURE: Final = Branch(
     "FAILURE",
-    "The d20 lands short of the DC. Lady Luck winces, kindly.",
+    "The d6 lands short of the number. Lady Luck winces, kindly.",
     "The Graceful Fall",
     "You miss, roll, and come up behind the guards. Was that the plan all along? It is now.",
     Fate.CUNNING,
 )
 
 
-def roll_d20(seed: int, *, disadvantage: bool = False) -> int:
-    """Roll a d20 from a seeded generator this function owns, so a run is reproducible.
-
-    With ``disadvantage``, roll twice and keep the lower die.
-    """
-    rng = random.Random(seed)
-    first = rng.randint(1, 20)
-    return min(first, rng.randint(1, 20)) if disadvantage else first
-
-
 def play_chapter_three(
     deciders: Sequence[Decider], say: str, bar: float, seed: int
 ) -> ChapterResult:
-    """Chapter 3: the score sets the DC, and the confidence is a dial, not a gate.
+    """Chapter 3: the score sets the number to beat, and the confidence is a dial, not a gate.
 
-    A sure Game Master rolls one d20. An unsure one makes you roll with disadvantage: the
-    uncertainty is priced into the dice instead of stopping the game.
+    A sure AI Game Master rolls one d6. An unsure one rolls twice and keeps the lower die:
+    the uncertainty is priced into the dice instead of stopping the game.
     """
     verdict = deciders[0].decide(scene(CH3, say), (CH3_Q,))
     answer = verdict.score(CH3_Q.key)
     sure = answer.confidence >= bar
     level = min(answer.level, len(CH3_RUBRIC) - 1)
-    dc, roll = CH3_DC[level], roll_d20(seed, disadvantage=not sure)
-    branch = CH3_SUCCESS if roll >= dc else CH3_FAILURE
-    how = "roll_dice(20)" if sure else "roll_dice(20) with disadvantage (unsure GM)"
-    detail = f"danger={CH3_RUBRIC[level]} -> DC {dc}; {how} = {roll}"
+    needs, roll = CH3_NEEDS[level], roll_d6(seed, keep_lower=not sure)
+    branch = CH3_SUCCESS if roll >= needs else CH3_FAILURE
+    how = "roll_dice(6)" if sure else "roll_dice(6) twice, keep the lower (unsure AI Game Master)"
+    detail = f"danger={CH3_RUBRIC[level]} -> needs {needs}+; {how} = {roll}"
     return resolve(
         CH3, say, (verdict,), branch, confidence=answer.confidence, acted=sure, detail=detail
     )
@@ -285,7 +313,7 @@ CH4_OPEN: Final = Branch(
     "PORTAL_OPENS",
     "All three wards glow green in a single pulse. The call crosses the portal.",
     "Through the Veil",
-    "You step out into the Feywild. The ogre steps out too. Different problem, prettier scenery.",
+    "You step into the faerie wilds. The ogre steps out too. Different problem, prettier scenery.",
     Fate.GLORY,
 )
 CH4_REFUSE: Final = Branch(
@@ -332,106 +360,74 @@ CH4_SCRIPTS: Final[Mapping[Preset, Mapping[str, NoulAnswer]]] = {
 }
 
 
-# --- Chapter 5: The Grand Alliance (a council of deciders) -----------------------------------
+# --- Chapter 5: The Grand Alliance (the orchestrator picks its specialist agents) -----------
 
 CH5: Final = ChapterInfo(
     number=5,
     title="The Grand Alliance",
     opening=(
-        "The dragon lands on the bridge. The Game Master calls the alliance over A2A: each ally"
-        " answers alone, and the Game Master only acts if the confident allies agree."
+        "The dragon lands on the bridge, the bramblehoot at your side. The AI Game Master"
+        " orchestrates two specialist agents: a Rules Agent that knows how the game works, and a"
+        " Character Agent that knows the party and what it carries."
     ),
-    default_say="The dragon bows its head, folds its wings and asks to make a deal.",
+    default_say="Can I leap from the bridge onto the dragon's back?",
 )
 CH5_OPTIONS: Final[Mapping[str, str]] = {
-    "charge": "Attack the dragon head-on",
-    "parley": "Talk to the dragon and strike a deal",
-    "sneak": "Slip past the dragon while it is distracted",
+    "rules_agent": "A question about the game's rules: is it allowed, how does it work, does it"
+    " need a roll",
+    "character_agent": "A question about the party: what they carry, who they are, what they"
+    " can do",
+    "no_agent": "Plain talk the AI Game Master can answer directly",
 }
-CH5_ROLES: Final[tuple[str, ...]] = (
-    "You are the Rules Agent: judge by the rules of the game and the dragon's stat block.",
-    "You are the Character Agent: you know the party, a level-2 bard and a level-3 rogue.",
-)
 CH5_Q: Final = ChoiceQuestion(
-    key="plan",
-    instructions="How should the party face the dragon?",
+    key="specialist",
+    instructions="Which specialist agent should the AI Game Master call before answering?",
     options=CH5_OPTIONS,
 )
 CH5_BRANCHES: Final[Mapping[str, Branch]] = {
-    "charge": Branch(
-        "CHARGE",
-        "The alliance agrees: steel first, questions never.",
-        "Dragonfall",
-        "The dragon did not expect a level-2 bard to hit that hard. Neither did the bard.",
+    "rules_agent": Branch(
+        "RULES_AGENT",
+        "The AI Game Master calls the Rules Agent, then comes back to you with the ruling: a"
+        " leap that far needs a roll.",
+        "By the Book",
+        "You decide the dragon's back can wait. The dragon looks quietly relieved.",
+        Fate.CUNNING,
+    ),
+    "character_agent": Branch(
+        "CHARACTER_AGENT",
+        "The AI Game Master calls the Character Agent, then comes back to you: one sword, one"
+        " coffee, one very loyal bramblehoot.",
+        "The Dragon's Coffee",
+        "The dragon wanted company, not a snack. It joins you for coffee every full moon now.",
+        Fate.CUNNING,
+    ),
+    "no_agent": Branch(
+        "NO_AGENT",
+        "No specialist needed: the AI Game Master answers you on the spot.",
+        "Straight Talk",
+        "The dragon likes a quick answer. It lets you pass with a roar the whole valley hears.",
         Fate.GLORY,
-    ),
-    "parley": Branch(
-        "PARLEY",
-        "The alliance agrees: the lute comes out before the swords do.",
-        "The Dragon's Encore",
-        "The dragon wanted a song, not a snack. It has a standing booking now, every full moon.",
-        Fate.CUNNING,
-    ),
-    "sneak": Branch(
-        "SNEAK",
-        "The alliance agrees: while the dragon admires the lute, the rogue does the rest.",
-        "The Empty Hoard",
-        "By the time the dragon finishes the song, its hoard is three gold coins lighter. Per bar.",
-        Fate.CUNNING,
     ),
 }
 
 
-def ally_name(index: int) -> str:
-    """The display name of the ally at ``index`` in the council."""
-    return ("Rules Agent", "Character Agent")[index] if index < 2 else f"Ally {index + 1}"
-
-
 def play_chapter_five(deciders: Sequence[Decider], say: str, bar: float) -> ChapterResult:
-    """Chapter 5: every ally answers alone; act only when all confident allies agree.
+    """Chapter 5: the orchestrator picks which specialist agent to call before answering.
 
-    With one decider, both allies run on it (two round trips, two roles). With several, each
-    ally runs on its own server -- point them at different model variants and watch them argue.
+    Sure of the pick: call that one agent, then answer the player. Unsure: go back to the
+    player with a question before any specialist is called.
     """
-    allies = list(deciders) if len(deciders) > 1 else [deciders[0], deciders[0]]
-    verdicts = []
-    for index, decider in enumerate(allies):
-        role = CH5_ROLES[index % len(CH5_ROLES)]
-        verdicts.append(decider.decide(f"{role}\n{scene(CH5, say)}", (CH5_Q,)))
-    votes = [v.choice(CH5_Q.key) for v in verdicts]
-    answers = {f"{CH5_Q.key}:{ally_name(i)}": vote for i, vote in enumerate(votes)}
-    detail = "; ".join(
-        f"{ally_name(i)} [{v.model}] -> {vote.choice}"
-        f" ({vote.confidence:.2f}, {v.latency_ms:.0f} ms)"
-        for i, (v, vote) in enumerate(zip(verdicts, votes, strict=True))
-    )
-    confident = [vote for vote in votes if vote.confidence >= bar]
-    picks = {vote.choice for vote in confident}
-    if len(picks) == 1:
-        branch, acted = CH5_BRANCHES[picks.pop()], True
-        conf = min(vote.confidence for vote in confident)
-    else:
-        why = "The allies disagree" if picks else "No ally is sure"
-        branch, acted = _hesitate(why), False
-        conf = max(vote.confidence for vote in votes)
-    return resolve(
-        CH5, say, verdicts, branch, confidence=conf, acted=acted, detail=detail, answers=answers
-    )
+    verdict = deciders[0].decide(scene(CH5, say), (CH5_Q,))
+    answer = verdict.choice(CH5_Q.key)
+    acted = answer.confidence >= bar
+    branch = CH5_BRANCHES[answer.choice] if acted else _hesitate("Which specialist to call")
+    return resolve(CH5, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
 
 
-CH5_SCRIPTS: Final[Mapping[Preset, tuple[Mapping[str, ChoiceAnswer], ...]]] = {
-    Preset.BOLD: (
-        {"plan": _choice("charge", 0.94, tuple(CH5_OPTIONS))},
-        {"plan": _choice("charge", 0.91, tuple(CH5_OPTIONS))},
-    ),
-    Preset.CAUTIOUS: (
-        {"plan": _choice("parley", 0.95, tuple(CH5_OPTIONS))},
-        {"plan": _choice("parley", 0.6, tuple(CH5_OPTIONS))},
-    ),
-    Preset.UNSURE: (
-        {"plan": _choice("parley", 0.93, tuple(CH5_OPTIONS))},
-        {"plan": _choice("sneak", 0.92, tuple(CH5_OPTIONS))},
-    ),
+CH5_SCRIPTS: Final[Mapping[Preset, Mapping[str, ChoiceAnswer]]] = {
+    Preset.BOLD: {"specialist": _choice("no_agent", 0.94, tuple(CH5_OPTIONS))},
+    Preset.CAUTIOUS: {"specialist": _choice("character_agent", 0.95, tuple(CH5_OPTIONS))},
+    Preset.UNSURE: {"specialist": _choice("rules_agent", 0.45, tuple(CH5_OPTIONS))},
 }
 
 
@@ -454,13 +450,9 @@ def _single(
 
 
 CHAPTERS: Final[Mapping[int, ChapterSpec]] = {
-    1: ChapterSpec(CH1, lambda d, s, b, _: play_chapter_one(d, s, b), _single(CH1_SCRIPTS)),
+    1: ChapterSpec(CH1, play_chapter_one, _single(CH1_SCRIPTS)),
     2: ChapterSpec(CH2, lambda d, s, b, _: play_chapter_two(d, s, b), _single(CH2_SCRIPTS)),
     3: ChapterSpec(CH3, play_chapter_three, _single(CH3_SCRIPTS)),
     4: ChapterSpec(CH4, lambda d, s, b, _: play_chapter_four(d, s, b), _single(CH4_SCRIPTS)),
-    5: ChapterSpec(
-        CH5,
-        lambda d, s, b, _: play_chapter_five(d, s, b),
-        lambda preset: tuple(ScriptedDecider(answers=a) for a in CH5_SCRIPTS[preset]),
-    ),
+    5: ChapterSpec(CH5, lambda d, s, b, _: play_chapter_five(d, s, b), _single(CH5_SCRIPTS)),
 }

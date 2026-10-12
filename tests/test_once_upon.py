@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from strands_decider_rpg.__main__ import main
-from strands_decider_rpg.chapters import CHAPTERS, Preset, roll_d20
+from strands_decider_rpg.chapters import CHAPTERS, Preset, roll_d6
 from strands_decider_rpg.engine import CONFIDENCE_BAR, Fate, finish_campaign, tally
 
 EXPECTED: dict[tuple[int, Preset], tuple[str, bool]] = {
-    (1, Preset.BOLD): ("BOLD", True),
-    (1, Preset.CAUTIOUS): ("CAUTIOUS", True),
+    (1, Preset.BOLD): ("SURPRISED", True),
+    (1, Preset.CAUTIOUS): ("SEEN_FIRST", True),
     (1, Preset.UNSURE): ("HESITATE", False),
     (2, Preset.BOLD): ("SHELL", True),
     (2, Preset.CAUTIOUS): ("HTTP_REQUEST", True),
@@ -21,8 +21,8 @@ EXPECTED: dict[tuple[int, Preset], tuple[str, bool]] = {
     (4, Preset.BOLD): ("PORTAL_OPENS", True),
     (4, Preset.CAUTIOUS): ("PORTAL_REFUSES", True),
     (4, Preset.UNSURE): ("HESITATE", False),
-    (5, Preset.BOLD): ("CHARGE", True),
-    (5, Preset.CAUTIOUS): ("PARLEY", True),
+    (5, Preset.BOLD): ("NO_AGENT", True),
+    (5, Preset.CAUTIOUS): ("CHARACTER_AGENT", True),
     (5, Preset.UNSURE): ("HESITATE", False),
 }
 
@@ -36,22 +36,34 @@ def test_every_chapter_every_preset(chapter: int, preset: Preset) -> None:
 
 
 def test_seed_7_dice() -> None:
-    # Chapter 3's presets rely on this: one d20 beats DC 10, disadvantage does not.
-    assert 10 <= roll_d20(7) < 20
-    assert roll_d20(7, disadvantage=True) < 10
+    # The presets rely on this: one d6 beats 3+ but not 4+ or 5+; keeping the lower of two
+    # misses 3+.
+    assert roll_d6(7) == 3
+    assert roll_d6(7, keep_lower=True) < 3
 
 
-def test_an_unsure_score_rolls_with_disadvantage() -> None:
+def test_chapter_one_rolls_only_when_a_check_is_needed() -> None:
+    spec = CHAPTERS[1]
+    say = spec.info.default_say
+    checked = spec.play(spec.scripted(Preset.CAUTIOUS), say, CONFIDENCE_BAR, 9)
+    unchecked = spec.play(spec.scripted(Preset.BOLD), say, CONFIDENCE_BAR, 9)
+    assert (checked.branch, checked.detail) == (
+        "SPOTS_FIRST",
+        "perception check -> needs 4+; the d6 shows 4",
+    )
+    assert (unchecked.branch, unchecked.detail) == ("SURPRISED", "")
+
+
+def test_an_unsure_score_rolls_twice_and_keeps_the_lower() -> None:
     spec = CHAPTERS[3]
     result = spec.play(spec.scripted(Preset.UNSURE), spec.info.default_say, CONFIDENCE_BAR, 7)
-    assert "disadvantage" in result.detail
+    assert "twice, keep the lower" in result.detail
 
 
-def test_chapter_five_needs_confident_allies_to_agree() -> None:
+def test_chapter_five_asks_the_player_before_calling_an_unsure_agent() -> None:
     spec = CHAPTERS[5]
     result = spec.play(spec.scripted(Preset.UNSURE), spec.info.default_say, CONFIDENCE_BAR, 7)
-    assert "disagree" in result.narration
-    assert result.round_trips == 2
+    assert (result.branch, result.acted, result.round_trips) == ("HESITATE", False, 1)
 
 
 def test_chapter_four_asks_three_questions_in_one_round_trip() -> None:
@@ -84,11 +96,24 @@ def test_campaign_reaches_each_final_ending(preset: Preset, fate: Fate) -> None:
     assert finish_campaign(results).fate == fate
 
 
-def test_cli_campaign_runs(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["campaign", "--script", "unsure"]) == 0
+def test_cli_campaign_runs(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The CLI always asks the local server; swap in fixed answers to test it offline.
+    monkeypatch.setattr(
+        "strands_decider_rpg.__main__._deciders",
+        lambda chapter: CHAPTERS[chapter].scripted(Preset.UNSURE),
+    )
+    assert main(["campaign"]) == 0
     assert "The Table Remembers" in capsys.readouterr().out
 
 
-def test_cli_reports_an_unreachable_decider(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["chapter", "1", "--decider", "http", "--council", "http://127.0.0.1:9"]) == 2
-    assert "decider unreachable" in capsys.readouterr().err
+def test_cli_reports_an_unreachable_decider(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A dead URL must fail loudly and point at the fix.
+    monkeypatch.setattr("strands_decider_rpg.__main__.DECIDER_URL", "http://127.0.0.1:9")
+    assert main(["chapter", "1"]) == 2
+    err = capsys.readouterr().err
+    assert "decider unreachable" in err
+    assert "Start the model server first" in err

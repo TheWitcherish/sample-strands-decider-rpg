@@ -1,12 +1,9 @@
-"""CLI: play one chapter or the whole campaign, scripted offline or against the live decider.
+"""CLI: play one chapter or the whole campaign against a local Strands Decider server.
 
-Scripted (no model, no GPU, no network):
-    uv run once-upon-decider chapter 1 --script bold
-    uv run once-upon-decider campaign --script unsure
-
-Live (a ``strands-decider serve`` instance on DECIDER_URL):
-    uv run once-upon-decider campaign --decider http
-    uv run once-upon-decider chapter 5 --decider http --council http://localhost:8000,http://localhost:8001
+Start the model server first (``strands-decider serve`` on DECIDER_URL), then:
+    uv run once-upon-strands-decider chapter 1
+    uv run once-upon-strands-decider chapter 1 --say "I slowly offer it a sip of my coffee."
+    uv run once-upon-strands-decider campaign
 """
 
 from __future__ import annotations
@@ -17,7 +14,7 @@ from collections.abc import Sequence
 
 import httpx
 
-from strands_decider_rpg.chapters import CHAPTERS, Preset
+from strands_decider_rpg.chapters import CHAPTERS
 from strands_decider_rpg.decider import DECIDER_URL, Decider, HttpDecider
 from strands_decider_rpg.engine import (
     CONFIDENCE_BAR,
@@ -69,27 +66,23 @@ def _unit_interval(raw: str) -> float:
     return value
 
 
-def _deciders(args: argparse.Namespace, chapter: int) -> tuple[Decider, ...]:
-    if args.decider == "scripted":
-        return CHAPTERS[chapter].scripted(Preset(args.script))
-    urls: Sequence[str] = args.council.split(",") if args.council else (DECIDER_URL,)
-    return tuple(HttpDecider(base_url=url.strip()) for url in urls)
+def _deciders(chapter: int) -> tuple[Decider, ...]:
+    """The decider a chapter plays against: the local server. Tests swap in fixed answers."""
+    del chapter  # every chapter asks the same server
+    return (HttpDecider(base_url=DECIDER_URL),)
 
 
 def _play(args: argparse.Namespace, chapter: int, say: str | None) -> ChapterResult:
     spec = CHAPTERS[chapter]
-    return spec.play(_deciders(args, chapter), say or spec.info.default_say, args.bar, args.seed)
+    return spec.play(_deciders(chapter), say or spec.info.default_say, args.bar, args.seed)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI. Returns a process exit code."""
     parser = argparse.ArgumentParser(description="Once Upon Agentic AI, decided by confidence.")
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--decider", choices=("scripted", "http"), default="scripted")
-    common.add_argument("--script", choices=[p.value for p in Preset], default="bold")
     common.add_argument("--bar", type=_unit_interval, default=CONFIDENCE_BAR)
-    common.add_argument("--seed", type=int, default=7, help="seed for chapter 3's d20")
-    common.add_argument("--council", default="", help="comma-separated decider URLs (chapter 5)")
+    common.add_argument("--seed", type=int, default=7, help="seed for the d6 (chapters 1 and 3)")
     sub = parser.add_subparsers(dest="command", required=True)
     one = sub.add_parser("chapter", parents=[common], help="play one chapter")
     one.add_argument("number", type=int, choices=sorted(CHAPTERS))
@@ -109,7 +102,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_render_campaign(finish_campaign(results)))
         return 0
     except httpx.HTTPError as exc:
-        print(f"decider unreachable: {exc}. Is `strands-decider serve` running?", file=sys.stderr)
+        print(
+            f"decider unreachable: {exc}. Start the model server first: see Getting Started"
+            " in the README.",
+            file=sys.stderr,
+        )
         return 2
 
 

@@ -18,7 +18,7 @@ decider = ["strands-decider==0.1.0"]
 dev = ["pytest>=9.1", "ruff>=0.16", "mypy>=2.4"]
 
 [project.scripts]
-once-upon-decider = "strands_decider_rpg.__main__:main"
+once-upon-strands-decider = "strands_decider_rpg.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
