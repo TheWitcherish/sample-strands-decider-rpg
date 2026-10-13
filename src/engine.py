@@ -1,8 +1,8 @@
 """The shared engine: chapter metadata, the typed result contract, and the campaign tally.
 
-Every chapter asks the decider something, then routes on *how sure* it is. Below the bar the Game
-Master hesitates and hands the dice to the table -- the model card's own advice: at a confidence
-of 0.9 or more answers are right about 95% of the time; below that, ask a person.
+Every chapter asks the decider something, then routes on *how sure* it is. Below the bar the AI
+Game Master hesitates and hands the dice to the table -- the model card's own advice: at a
+confidence of 0.9 or more answers are right about 95% of the time; below that, ask a person.
 """
 
 from __future__ import annotations

@@ -1,6 +1,8 @@
 # sample-strands-decider-rpg
 
-A **sample** repository for experiments, not production code. It replays the five chapters of
+![Let's Strands Decider Role-Play](cover.jpg)
+
+A **sample** repository for experiments, not production code. It replays chapters 1 to 5 of
 [Once Upon Agentic AI](https://github.com/aws-samples/sample-once-upon-agentic-ai) — an AI Game Master
 for a Table-Top Role-Playing Game (TTRPG) built with Strands Agents — and hands the decisions to
 [Strands Decider](https://github.com/strands-labs/strands-decider), a small, fast, open-source
@@ -18,7 +20,7 @@ the model is, not only on what it picked. Five chapters add up to one of three f
 ## Getting Started
 
 The game talks to Strands Decider running on your own machine. The model is an opt-in extra
-because it pulls `torch` and `transformers` (about 4 GB of weights download on the first serve).
+because it pulls `torch` and `transformers`, and the first serve downloads about 4 GB of weights.
 It runs on an Apple-silicon Mac (MPS), a CUDA GPU, or CPU.
 
 ```bash
