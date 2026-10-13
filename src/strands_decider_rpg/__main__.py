@@ -15,7 +15,7 @@ from collections.abc import Sequence
 import httpx
 
 from strands_decider_rpg.chapters import CHAPTERS
-from strands_decider_rpg.decider import DECIDER_URL, Decider, HttpDecider
+from strands_decider_rpg.decider import DECIDER_URL, HttpDecider
 from strands_decider_rpg.engine import (
     CONFIDENCE_BAR,
     CampaignResult,
@@ -66,15 +66,10 @@ def _unit_interval(raw: str) -> float:
     return value
 
 
-def _deciders(chapter: int) -> tuple[Decider, ...]:
-    """The decider a chapter plays against: the local server. Tests swap in fixed answers."""
-    del chapter  # every chapter asks the same server
-    return (HttpDecider(base_url=DECIDER_URL),)
-
-
 def _play(args: argparse.Namespace, chapter: int, say: str | None) -> ChapterResult:
     spec = CHAPTERS[chapter]
-    return spec.play(_deciders(chapter), say or spec.info.default_say, args.bar, args.seed)
+    decider = HttpDecider(base_url=DECIDER_URL)
+    return spec.play(decider, say or spec.info.default_say, args.bar, args.seed)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

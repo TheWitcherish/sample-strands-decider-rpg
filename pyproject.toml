@@ -9,9 +9,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The real decision model plus its CLI and server. Heavy (pulls torch + transformers), so it is
-# an opt-in extra: the default install stays light and the scripted demo and the tests run with
-# no model, no GPU and no network. Install with `uv sync --extra decider` for the live run.
+# The real decision model plus its CLI and server. Heavy (pulls torch + transformers), and only
+# the server needs it: the game and the tests talk to it over HTTP. The serve command in the
+# README installs it on first use with `uv run --extra decider`.
 decider = ["strands-decider==0.1.0"]
 
 [dependency-groups]

@@ -10,7 +10,6 @@ question types over one state, all in a single forward pass:
 - ``score``: an ordered rubric, returns an expected level, the probabilities and a confidence.
 
 The wire shapes below mirror ``strands_decider/schema.py`` in the pinned ``strands-decider==0.1.0``.
-A story engine depends on the ``Decider`` Protocol and never imports a concrete backend.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Final, Literal, Protocol
+from typing import Annotated, Final, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
@@ -221,17 +220,7 @@ class Verdict(BaseModel):
 _VERDICT: Final[TypeAdapter[Verdict]] = TypeAdapter(Verdict)
 
 
-# --- Backends --------------------------------------------------------------------------------
-
-
-class Decider(Protocol):
-    """Read-only contract: given a state and questions, answer them all in one round trip.
-
-    Borrow-checker discipline: ``questions`` is a read-only ``Sequence`` the decider never
-    mutates; the returned ``Verdict`` is a fresh frozen value.
-    """
-
-    def decide(self, state: str, questions: Sequence[Question]) -> Verdict: ...
+# --- The client ------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,48 +230,24 @@ class HttpDecider:
     Attributes:
         base_url: Server base URL. Defaults to the ``DECIDER_URL`` env var or localhost:8000.
         timeout_s: Per-request timeout in seconds.
-        client: Optional caller-owned client (used in tests). When omitted, a client is created
-            and closed per call -- its lifetime is the ``decide`` scope.
     """
 
     base_url: str = DECIDER_URL
     timeout_s: float = 60.0
-    client: httpx.Client | None = None
 
     def decide(self, state: str, questions: Sequence[Question]) -> Verdict:
         """Ask every question in one request and return the typed verdict.
+
+        ``questions`` is a read-only borrow; the returned ``Verdict`` is a fresh frozen value.
 
         Raises:
             httpx.HTTPError: If the server is unreachable or returns a non-2xx status.
             pydantic.ValidationError: If the response is not the expected shape.
         """
         body = {"state": state, "questions": {q.key: _wire_question(q) for q in questions}}
-        # Lifetimes are scopes: a client we create, we close; an injected one stays the caller's.
-        client = self.client if self.client is not None else httpx.Client(timeout=self.timeout_s)
-        try:
+        # Lifetimes are scopes: the connection lives exactly as long as this block.
+        with httpx.Client(timeout=self.timeout_s) as client:
             response = client.post(f"{self.base_url}/v1/systemone", json=body)
             response.raise_for_status()
             payload: object = response.json()
-        finally:
-            if self.client is None:
-                client.close()
         return _VERDICT.validate_python(payload)
-
-
-@dataclass(frozen=True, slots=True)
-class ScriptedDecider:
-    """Deterministic decider for tests and the offline demo: no model, no GPU, no network.
-
-    Attributes:
-        answers: Read-only mapping of question key to the answer to return.
-    """
-
-    answers: Mapping[str, NoulAnswer | ChoiceAnswer | ScoreAnswer]
-
-    def decide(self, state: str, questions: Sequence[Question]) -> Verdict:
-        """Return the scripted answer for each question asked.
-
-        Raises:
-            KeyError: If a question has no scripted answer.
-        """
-        return Verdict(model="scripted", answers={q.key: self.answers[q.key] for q in questions})

@@ -49,9 +49,10 @@ automatically is `0.9`). Model ids are perishable: check the
 The Gemma 4 variants (E2B, E4B, 12B, 26B-A4B) need `strands-decider` from `main`, not the `0.1.0`
 release pinned here.
 
-## Certification check
+## Run the tests
+
+With the model server from Getting Started running:
 
 ```bash
-uv run pytest -q                                  # scripted: every chapter, every ending
-DECIDER_LIVE=1 uv run --extra decider pytest -q   # plus every chapter on the live model
+uv run pytest -q
 ```

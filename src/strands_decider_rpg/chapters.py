@@ -12,30 +12,17 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Final
 
 from strands_decider_rpg.decider import (
-    ChoiceAnswer,
     ChoiceQuestion,
-    Decider,
-    NoulAnswer,
-    ScoreAnswer,
+    HttpDecider,
     ScoreQuestion,
-    ScriptedDecider,
     YesNoQuestion,
 )
 from strands_decider_rpg.engine import Branch, ChapterInfo, ChapterResult, Fate, resolve, scene
-
-
-class Preset(StrEnum):
-    """Scripted runs for the offline demo: what the fake decider will answer."""
-
-    BOLD = "bold"
-    CAUTIOUS = "cautious"
-    UNSURE = "unsure"
 
 
 def _hesitate(what: str) -> Branch:
@@ -49,12 +36,6 @@ def _hesitate(what: str) -> Branch:
         ),
         fate=Fate.TABLE,
     )
-
-
-def _choice(picked: str, confidence: float, options: Sequence[str]) -> ChoiceAnswer:
-    rest = (1.0 - confidence) / max(len(options) - 1, 1)
-    probs = {o: (confidence if o == picked else rest) for o in options}
-    return ChoiceAnswer(choice=picked, probabilities=probs, confidence=confidence)
 
 
 def roll_d6(seed: int, *, keep_lower: bool = False) -> int:
@@ -114,13 +95,13 @@ CH1_SURPRISED: Final = Branch(
 )
 
 
-def play_chapter_one(deciders: Sequence[Decider], say: str, bar: float, seed: int) -> ChapterResult:
+def play_chapter_one(decider: HttpDecider, say: str, bar: float, seed: int) -> ChapterResult:
     """Chapter 1: decide whether the action needs a perception check, and only then roll.
 
     Sure it does: roll a d6 and beat the number. Sure it does not: no roll, the creature finds
     you. Unsure: the AI Game Master asks the player instead of guessing.
     """
-    verdict = deciders[0].decide(scene(CH1, say), (CH1_Q,))
+    verdict = decider.decide(scene(CH1, say), (CH1_Q,))
     answer = verdict.noul(CH1_Q.key)
     acted = answer.confidence >= bar
     detail = ""
@@ -135,13 +116,6 @@ def play_chapter_one(deciders: Sequence[Decider], say: str, bar: float, seed: in
     return resolve(
         CH1, say, (verdict,), branch, confidence=answer.confidence, acted=acted, detail=detail
     )
-
-
-CH1_SCRIPTS: Final[Mapping[Preset, Mapping[str, NoulAnswer]]] = {
-    Preset.BOLD: {"needs_check": NoulAnswer(noul=0.02)},
-    Preset.CAUTIOUS: {"needs_check": NoulAnswer(noul=0.98)},
-    Preset.UNSURE: {"needs_check": NoulAnswer(noul=0.58)},
-}
 
 
 # --- Chapter 2: The Adventurer's Arsenal (choice = tool selection) ---------------------------
@@ -192,20 +166,13 @@ CH2_BRANCHES: Final[Mapping[str, Branch]] = {
 }
 
 
-def play_chapter_two(deciders: Sequence[Decider], say: str, bar: float) -> ChapterResult:
+def play_chapter_two(decider: HttpDecider, say: str, bar: float) -> ChapterResult:
     """Chapter 2: a choice question picks the tool; low confidence means ask instead of guess."""
-    verdict = deciders[0].decide(scene(CH2, say), (CH2_Q,))
+    verdict = decider.decide(scene(CH2, say), (CH2_Q,))
     answer = verdict.choice(CH2_Q.key)
     acted = answer.confidence >= bar
     branch = CH2_BRANCHES[answer.choice] if acted else _hesitate("Which tool, though")
     return resolve(CH2, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
-
-
-CH2_SCRIPTS: Final[Mapping[Preset, Mapping[str, ChoiceAnswer]]] = {
-    Preset.BOLD: {"tool": _choice("shell", 0.95, tuple(CH2_OPTIONS))},
-    Preset.CAUTIOUS: {"tool": _choice("http_request", 0.96, tuple(CH2_OPTIONS))},
-    Preset.UNSURE: {"tool": _choice("file_editor", 0.41, tuple(CH2_OPTIONS))},
-}
 
 
 # --- Chapter 3: The Art of Magical Forging (score sets the dice) -----------------------------
@@ -242,15 +209,13 @@ CH3_FAILURE: Final = Branch(
 )
 
 
-def play_chapter_three(
-    deciders: Sequence[Decider], say: str, bar: float, seed: int
-) -> ChapterResult:
+def play_chapter_three(decider: HttpDecider, say: str, bar: float, seed: int) -> ChapterResult:
     """Chapter 3: the score sets the number to beat, and the confidence is a dial, not a gate.
 
     A sure AI Game Master rolls one d6. An unsure one rolls twice and keeps the lower die:
     the uncertainty is priced into the dice instead of stopping the game.
     """
-    verdict = deciders[0].decide(scene(CH3, say), (CH3_Q,))
+    verdict = decider.decide(scene(CH3, say), (CH3_Q,))
     answer = verdict.score(CH3_Q.key)
     sure = answer.confidence >= bar
     level = min(answer.level, len(CH3_RUBRIC) - 1)
@@ -261,25 +226,6 @@ def play_chapter_three(
     return resolve(
         CH3, say, (verdict,), branch, confidence=answer.confidence, acted=sure, detail=detail
     )
-
-
-CH3_SCRIPTS: Final[Mapping[Preset, Mapping[str, ScoreAnswer]]] = {
-    Preset.BOLD: {
-        "danger": ScoreAnswer(
-            score=1.0, probabilities={"0": 0.02, "1": 0.95, "2": 0.02, "3": 0.01}, confidence=0.93
-        )
-    },
-    Preset.CAUTIOUS: {
-        "danger": ScoreAnswer(
-            score=3.0, probabilities={"0": 0.0, "1": 0.01, "2": 0.03, "3": 0.96}, confidence=0.95
-        )
-    },
-    Preset.UNSURE: {
-        "danger": ScoreAnswer(
-            score=1.5, probabilities={"0": 0.4, "1": 0.1, "2": 0.1, "3": 0.4}, confidence=0.12
-        )
-    },
-}
 
 
 # --- Chapter 4: Planar Portals (three guards, one round trip) --------------------------------
@@ -325,9 +271,9 @@ CH4_REFUSE: Final = Branch(
 )
 
 
-def play_chapter_four(deciders: Sequence[Decider], say: str, bar: float) -> ChapterResult:
+def play_chapter_four(decider: HttpDecider, say: str, bar: float) -> ChapterResult:
     """Chapter 4: three yes/no wards in ONE request -- the state is read once, not three times."""
-    verdict = deciders[0].decide(scene(CH4, say), CH4_QS)
+    verdict = decider.decide(scene(CH4, say), CH4_QS)
     wards = tuple(verdict.noul(q.key) for q in CH4_QS)
     confident = [w for w in wards if w.confidence >= bar]
     weakest = min(w.confidence for w in wards)
@@ -339,25 +285,6 @@ def play_chapter_four(deciders: Sequence[Decider], say: str, bar: float) -> Chap
     else:
         branch, acted, conf = _hesitate("A ward flickers"), False, weakest
     return resolve(CH4, say, (verdict,), branch, confidence=conf, acted=acted, detail=detail)
-
-
-CH4_SCRIPTS: Final[Mapping[Preset, Mapping[str, NoulAnswer]]] = {
-    Preset.BOLD: {
-        "wants_portal": NoulAnswer(noul=0.99),
-        "names_place": NoulAnswer(noul=0.97),
-        "is_safe": NoulAnswer(noul=0.96),
-    },
-    Preset.CAUTIOUS: {
-        "wants_portal": NoulAnswer(noul=0.99),
-        "names_place": NoulAnswer(noul=0.03),
-        "is_safe": NoulAnswer(noul=0.9),
-    },
-    Preset.UNSURE: {
-        "wants_portal": NoulAnswer(noul=0.98),
-        "names_place": NoulAnswer(noul=0.97),
-        "is_safe": NoulAnswer(noul=0.55),
-    },
-}
 
 
 # --- Chapter 5: The Grand Alliance (the orchestrator picks its specialist agents) -----------
@@ -411,24 +338,17 @@ CH5_BRANCHES: Final[Mapping[str, Branch]] = {
 }
 
 
-def play_chapter_five(deciders: Sequence[Decider], say: str, bar: float) -> ChapterResult:
+def play_chapter_five(decider: HttpDecider, say: str, bar: float) -> ChapterResult:
     """Chapter 5: the orchestrator picks which specialist agent to call before answering.
 
     Sure of the pick: call that one agent, then answer the player. Unsure: go back to the
     player with a question before any specialist is called.
     """
-    verdict = deciders[0].decide(scene(CH5, say), (CH5_Q,))
+    verdict = decider.decide(scene(CH5, say), (CH5_Q,))
     answer = verdict.choice(CH5_Q.key)
     acted = answer.confidence >= bar
     branch = CH5_BRANCHES[answer.choice] if acted else _hesitate("Which specialist to call")
     return resolve(CH5, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
-
-
-CH5_SCRIPTS: Final[Mapping[Preset, Mapping[str, ChoiceAnswer]]] = {
-    Preset.BOLD: {"specialist": _choice("no_agent", 0.94, tuple(CH5_OPTIONS))},
-    Preset.CAUTIOUS: {"specialist": _choice("character_agent", 0.95, tuple(CH5_OPTIONS))},
-    Preset.UNSURE: {"specialist": _choice("rules_agent", 0.45, tuple(CH5_OPTIONS))},
-}
 
 
 # --- The chapter table -----------------------------------------------------------------------
@@ -436,23 +356,16 @@ CH5_SCRIPTS: Final[Mapping[Preset, Mapping[str, ChoiceAnswer]]] = {
 
 @dataclass(frozen=True, slots=True)
 class ChapterSpec:
-    """How to play one chapter, and how to fake its decider offline."""
+    """How to play one chapter."""
 
     info: ChapterInfo
-    play: Callable[[Sequence[Decider], str, float, int], ChapterResult]
-    scripted: Callable[[Preset], tuple[Decider, ...]]
-
-
-def _single(
-    scripts: Mapping[Preset, Mapping[str, NoulAnswer | ChoiceAnswer | ScoreAnswer]],
-) -> Callable[[Preset], tuple[Decider, ...]]:
-    return lambda preset: (ScriptedDecider(answers=scripts[preset]),)
+    play: Callable[[HttpDecider, str, float, int], ChapterResult]
 
 
 CHAPTERS: Final[Mapping[int, ChapterSpec]] = {
-    1: ChapterSpec(CH1, play_chapter_one, _single(CH1_SCRIPTS)),
-    2: ChapterSpec(CH2, lambda d, s, b, _: play_chapter_two(d, s, b), _single(CH2_SCRIPTS)),
-    3: ChapterSpec(CH3, play_chapter_three, _single(CH3_SCRIPTS)),
-    4: ChapterSpec(CH4, lambda d, s, b, _: play_chapter_four(d, s, b), _single(CH4_SCRIPTS)),
-    5: ChapterSpec(CH5, lambda d, s, b, _: play_chapter_five(d, s, b), _single(CH5_SCRIPTS)),
+    1: ChapterSpec(CH1, play_chapter_one),
+    2: ChapterSpec(CH2, lambda d, s, b, _: play_chapter_two(d, s, b)),
+    3: ChapterSpec(CH3, play_chapter_three),
+    4: ChapterSpec(CH4, lambda d, s, b, _: play_chapter_four(d, s, b)),
+    5: ChapterSpec(CH5, lambda d, s, b, _: play_chapter_five(d, s, b)),
 }
