@@ -24,7 +24,7 @@ once-upon-strands-decider = "cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# Flat src/: the modules sit straight in src/ and install as top-level modules.
+# Only here so `uv sync` installs the once-upon-strands-decider command from the files in src/.
 [tool.hatch.build.targets.wheel]
 only-include = ["src"]
 sources = ["src"]

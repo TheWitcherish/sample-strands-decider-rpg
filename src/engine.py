@@ -63,8 +63,8 @@ class ChapterResult(BaseModel):
         title: Chapter title.
         opening: Scene narrated before the decision.
         say: What the adventurer said.
-        model: Model name(s) that answered.
-        latency_ms: Total server-side decider time for this chapter.
+        model: Model name that answered.
+        latency_ms: Server-side decider time for this chapter.
         round_trips: Requests sent to the decider.
         answers: Every answer the decider returned, by question key.
         confidence: The confidence the routing was decided on.
@@ -105,27 +105,23 @@ def scene(info: ChapterInfo, say: str) -> str:
 def resolve(
     info: ChapterInfo,
     say: str,
-    verdicts: Sequence[Verdict],
+    verdict: Verdict,
     branch: Branch,
     *,
     confidence: float,
     acted: bool,
     detail: str = "",
-    answers: Mapping[str, Answer] | None = None,
 ) -> ChapterResult:
-    """Fold a chapter's verdicts and chosen branch into its frozen result."""
-    merged: dict[str, Answer] = {}
-    for verdict in verdicts:
-        merged.update(verdict.answers)
+    """Fold a chapter's verdict and chosen branch into its frozen result."""
     return ChapterResult(
         chapter=info.number,
         title=info.title,
         opening=info.opening,
         say=say,
-        model=" + ".join(dict.fromkeys(v.model for v in verdicts)),
-        latency_ms=sum(v.latency_ms for v in verdicts),
-        round_trips=len(verdicts),
-        answers=answers if answers is not None else merged,
+        model=verdict.model,
+        latency_ms=verdict.latency_ms,
+        round_trips=1,  # every chapter asks all its questions in one request
+        answers=verdict.answers,
         confidence=confidence,
         acted=acted,
         branch=branch.label,

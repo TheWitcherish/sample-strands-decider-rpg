@@ -114,7 +114,7 @@ def play_chapter_one(decider: HttpDecider, say: str, bar: float, seed: int) -> C
     else:
         branch = CH1_SURPRISED
     return resolve(
-        CH1, say, (verdict,), branch, confidence=answer.confidence, acted=acted, detail=detail
+        CH1, say, verdict, branch, confidence=answer.confidence, acted=acted, detail=detail
     )
 
 
@@ -172,7 +172,7 @@ def play_chapter_two(decider: HttpDecider, say: str, bar: float) -> ChapterResul
     answer = verdict.choice(CH2_Q.key)
     acted = answer.confidence >= bar
     branch = CH2_BRANCHES[answer.choice] if acted else _hesitate("Which tool, though")
-    return resolve(CH2, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
+    return resolve(CH2, say, verdict, branch, confidence=answer.confidence, acted=acted)
 
 
 # --- Chapter 3: The Art of Magical Forging (score sets the dice) -----------------------------
@@ -224,7 +224,7 @@ def play_chapter_three(decider: HttpDecider, say: str, bar: float, seed: int) ->
     how = "roll_dice(6)" if sure else "roll_dice(6) twice, keep the lower (unsure AI Game Master)"
     detail = f"danger={CH3_RUBRIC[level]} -> needs {needs}+; {how} = {roll}"
     return resolve(
-        CH3, say, (verdict,), branch, confidence=answer.confidence, acted=sure, detail=detail
+        CH3, say, verdict, branch, confidence=answer.confidence, acted=sure, detail=detail
     )
 
 
@@ -284,7 +284,7 @@ def play_chapter_four(decider: HttpDecider, say: str, bar: float) -> ChapterResu
         branch, acted, conf = CH4_OPEN, True, weakest
     else:
         branch, acted, conf = _hesitate("A ward flickers"), False, weakest
-    return resolve(CH4, say, (verdict,), branch, confidence=conf, acted=acted, detail=detail)
+    return resolve(CH4, say, verdict, branch, confidence=conf, acted=acted, detail=detail)
 
 
 # --- Chapter 5: The Grand Alliance (the orchestrator picks its specialist agents) -----------
@@ -348,7 +348,7 @@ def play_chapter_five(decider: HttpDecider, say: str, bar: float) -> ChapterResu
     answer = verdict.choice(CH5_Q.key)
     acted = answer.confidence >= bar
     branch = CH5_BRANCHES[answer.choice] if acted else _hesitate("Which specialist to call")
-    return resolve(CH5, say, (verdict,), branch, confidence=answer.confidence, acted=acted)
+    return resolve(CH5, say, verdict, branch, confidence=answer.confidence, acted=acted)
 
 
 # --- The chapter table -----------------------------------------------------------------------
