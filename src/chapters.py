@@ -16,13 +16,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from strands_decider_rpg.decider import (
+from decider import (
     ChoiceQuestion,
     HttpDecider,
     ScoreQuestion,
     YesNoQuestion,
 )
-from strands_decider_rpg.engine import Branch, ChapterInfo, ChapterResult, Fate, resolve, scene
+from engine import Branch, ChapterInfo, ChapterResult, Fate, resolve, scene
 
 
 def _hesitate(what: str) -> Branch:

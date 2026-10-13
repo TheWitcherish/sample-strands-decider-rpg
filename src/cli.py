@@ -14,9 +14,9 @@ from collections.abc import Sequence
 
 import httpx
 
-from strands_decider_rpg.chapters import CHAPTERS
-from strands_decider_rpg.decider import DECIDER_URL, HttpDecider
-from strands_decider_rpg.engine import (
+from chapters import CHAPTERS
+from decider import DECIDER_URL, HttpDecider
+from engine import (
     CONFIDENCE_BAR,
     CampaignResult,
     ChapterResult,

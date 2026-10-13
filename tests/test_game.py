@@ -9,10 +9,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from strands_decider_rpg.__main__ import main
-from strands_decider_rpg.chapters import CHAPTERS
-from strands_decider_rpg.decider import HttpDecider, NoulAnswer
-from strands_decider_rpg.engine import CONFIDENCE_BAR, ChapterResult, Fate, finish_campaign, tally
+from chapters import CHAPTERS
+from cli import main
+from decider import HttpDecider, NoulAnswer
+from engine import CONFIDENCE_BAR, ChapterResult, Fate, finish_campaign, tally
 
 
 @pytest.fixture(scope="module")
@@ -109,7 +109,7 @@ def test_a_tie_at_the_top_goes_to_the_table(fates: list[Fate], expected: Fate) -
 def test_cli_reports_an_unreachable_decider(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("strands_decider_rpg.__main__.DECIDER_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr("cli.DECIDER_URL", "http://127.0.0.1:9")
     assert main(["chapter", "1"]) == 2
     err = capsys.readouterr().err
     assert "decider unreachable" in err

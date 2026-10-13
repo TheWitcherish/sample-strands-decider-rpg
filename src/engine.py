@@ -15,7 +15,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from strands_decider_rpg.decider import Answer, Verdict
+from decider import Answer, Verdict
 
 CONFIDENCE_BAR: Final[float] = 0.8
 """The 'sure enough to act' bar.
